@@ -30,3 +30,6 @@ def analyze_resume(resume_text,jd_text):
         "suggestions": suggestions,
         "matched_score": matched_score
     }
+
+
+analyse_resume = analyze_resume

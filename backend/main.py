@@ -1,28 +1,27 @@
-#main.py                                                                                                      
-# pyrefly: ignore [missing-import]
-from fastapi import FastAPI, HTTPException
-# pyrefly: ignore [missing-import]
-from pydantic import BaseModel,Field,field_validator
+#main.py
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from database import get_connection
 from analyzer import analyze_resume
 import json
-# pyrefly: ignore [missing-import]
-from fastapi.middleware.cors import CORSMiddleware
-
+from typing import Optional
+import apply_db
+import auto_apply
+from job_fetcher import fetch_jobs, JobFetchError
 
 app = FastAPI()
 
-app.add_middleware ( CORSMiddleware, allow_origins = [ "http://127.0.0.1:5500",
- "http://localhost:5500",
- "http://127.0.0.1:5501",
- "http://localhost:5500"
-],
-allow_credentials = False,
-allow_methods = ["GET", "POST"],
-allow_headers = ["Content-Type"]
- )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class analyseRequest(BaseModel):
+
+class AnalyzeRequest(BaseModel):
     resume_text: str
     jd_text: str
 
@@ -30,12 +29,13 @@ class analyseRequest(BaseModel):
 @app.get("/")
 def home():
     return {
-        "message": "Resume analyser Backend is Running"
+        "message": "Resume Analyzer Backend is Running"
     }
 
 
+@app.post("/api/analyze")
 @app.post("/api/analyse")
-def analyse(request: analyseRequest):
+def analyze(request: AnalyzeRequest):
     result = analyze_resume(request.resume_text,request.jd_text)
     print(result)
     connection = None
@@ -86,6 +86,80 @@ def analyse(request: analyseRequest):
         **result
     }
 
+
+# ---------------- Auto-apply feature ----------------
+
+class queueApplicationRequest(BaseModel):
+    resume_text: str
+    job_title: str
+    company: str
+    job_description: str
+    job_url: Optional[str] = None
+    apply_email: Optional[str] = None
+
+
+# Step 1: find real jobs for a keyword
+@app.get("/api/jobs/search")
+def search_jobs(keyword: str = Query(..., min_length=2), limit: int = 10):
+    try:
+        return {"jobs": fetch_jobs(keyword, limit)}
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except JobFetchError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+# Step 2: score the job, write a cover letter and queue it for approval
+@app.post("/api/applications")
+def queue_application(request: queueApplicationRequest):
+    try:
+        return auto_apply.queue_application(
+            request.resume_text,
+            request.job_title,
+            request.company,
+            request.job_description,
+            request.job_url,
+            request.apply_email,
+        )
+    except auto_apply.DuplicateApplicationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (auto_apply.InvalidApplicationError, auto_apply.LowMatchError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to queue application"
+        ) from error
+
+
+# Step 3: list every queued / sent application
+@app.get("/api/applications")
+def get_applications():
+    try:
+        return {"applications": apply_db.list_applications()}
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve applications"
+        ) from error
+
+
+# Step 4: the user approves one application and it is sent
+@app.post("/api/applications/{application_id}/approve")
+def approve_application(application_id: int):
+    try:
+        return auto_apply.apply_to_application(application_id)
+    except auto_apply.ApplicationNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except auto_apply.DailyLimitError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send application"
+        ) from error
+
+
 # Backend API: Retrieve analysis history
 @app.get("/api/analyses")
 def get_analyses():
@@ -108,17 +182,17 @@ def get_analyses():
                 created_At
             FROM resume_analyzer
             ORDER BY Analysis_id DESC
-            LIMIT 3"""
+            LIMIT 20"""
 
         cursor.execute(query)
         analyses = cursor.fetchall()
 
-        for i in analyses:
+        for analysis in analyses:
             for field in ("matched_skills", "missing_skills"):
-                value = i[field]
+                value = analysis[field]
 
                 if isinstance(value, str):
-                    i[field] = json.loads(value)
+                    analysis[field] = json.loads(value)
 
         return {"analyses": analyses}
 

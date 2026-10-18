@@ -1,5 +1,4 @@
-
-# script.js
+// script.js
 
 
 const form = document.getElementById("analyze-Form");

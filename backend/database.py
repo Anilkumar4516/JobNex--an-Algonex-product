@@ -1,10 +1,15 @@
 import os
+from pathlib import Path
 import mysql.connector
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
+    env_path = Path(__file__).resolve().parent / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+    else:
+        load_dotenv()
+except ImportError: 
     pass
 
 
@@ -15,4 +20,4 @@ def get_connection():
         user=os.getenv("DB_USER", "root"),
         password=os.getenv("DB_PASSWORD", "Algonex@2003"),
         database=os.getenv("DB_NAME", "jobnex")
-    )
+    )
