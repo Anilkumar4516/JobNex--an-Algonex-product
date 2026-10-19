@@ -138,15 +138,15 @@ No
 Apply now
 
 '''
-
-result=analyze_resume_with_ai(resume_text,jd_text)
-try:
-    data=json.loads(result)
-    print("Matchscore:",data["matched_score"])
-    print("Matching skills:",data["matched_skills"])
-    print("Missing skills:",data["missing_skills"])
-    print("Suggestions:",data["suggestions"])
-    print("Summary:",data["summary"])
-except(json.JSONDecodeError,KeyError) as error:
-    print("Hey! Fix the json or column names")
-    print("Hey! Error is:",error)
+if __name__ == "__main__":
+    result = analyze_resume_with_ai(resume_text, jd_text)
+    try:
+        data = json.loads(result)
+        print("Matchscore:", data["matched_score"])
+        print("Matching skills:", data["matched_skills"])
+        print("Missing skills:", data["missing_skills"])
+        print("Suggestions:", data["suggestions"])
+        print("Summary:", data["summary"])
+    except (json.JSONDecodeError, KeyError) as error:
+        print("Hey! Fix the json or column names")
+        print("Hey! Error is:", error)

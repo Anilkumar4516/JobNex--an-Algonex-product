@@ -16,6 +16,7 @@ JobNex is an intelligent career assistant and automated job application platform
 - **AI-Powered Analysis:** Gemini-powered in-depth resume critique and role suitability assessment.
 - **Remote Job Search:** Query live remote tech jobs in real-time via Remotive API with built-in caching.
 - **Auto-Apply & Cover Letter Pipeline:** Auto-generate tailored cover letters, queue applications with duplicate detection and match thresholds, and support manual approval workflows.
+- **Daily Automated Job Matching:** Background scheduler triggers automatic daily job searches, matches candidate resumes against active listings, and stores matches for review.
 - **Application Tracking:** Track application states (`queued`, `sent`, `failed`, `manual_required`) with audit logging.
 
 ---
@@ -44,6 +45,7 @@ JobNex is an intelligent career assistant and automated job application platform
 5. Initialize the database schema (optional if using MySQL Workbench):
    ```bash
    python apply_db.py
+   python daily_db.py
    ```
 
 6. Run the FastAPI development server:
@@ -67,3 +69,8 @@ Open `Frontend/index.html` in your browser or run with Live Server (port 5500 / 
 | `POST` | `/api/applications` | Score & queue job application with auto-generated cover letter |
 | `GET` | `/api/applications` | List queued and sent applications |
 | `POST` | `/api/applications/{id}/approve` | Approve and dispatch application |
+| `GET` | `/api/daily/settings` | Get daily matching settings and next schedule |
+| `PUT` | `/api/daily/settings` | Save daily matching settings and reschedule trigger |
+| `POST` | `/api/daily/run` | Execute immediate daily job match scan |
+| `GET` | `/api/daily/jobs` | Retrieve matched jobs for a specific date |
+

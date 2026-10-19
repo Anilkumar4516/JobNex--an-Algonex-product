@@ -1,16 +1,30 @@
 #main.py
+from contextlib import asynccontextmanager
+from datetime import date as date_type
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from database import get_connection
 from analyzer import analyze_resume
 import json
 from typing import Optional
 import apply_db
 import auto_apply
+import daily_db
+import daily_jobs
+import daily_scheduler
 from job_fetcher import fetch_jobs, JobFetchError
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app):
+    # Start the daily trigger when the API starts, stop it when the API stops.
+    daily_scheduler.start()
+    yield
+    daily_scheduler.shutdown()
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -159,7 +173,108 @@ def approve_application(application_id: int):
             detail="Failed to send application"
         ) from error
 
+# ---------------- Daily matches feature ----------------
 
+class DailySettingsRequest(BaseModel):
+    resume_text: str = Field(..., min_length=20)
+    keywords: str = Field(..., min_length=2)
+    min_score: float = Field(60, ge=0, le=100)
+    run_hour: int = Field(9, ge=0, le=23)
+    run_minute: int = Field(0, ge=0, le=59)
+    enabled: bool = True
+
+
+def _settings_response():
+    settings = daily_db.get_settings()
+    last_run = settings["last_run_date"]
+    settings["last_run_date"] = last_run.isoformat() if last_run else None
+    settings["next_run"] = daily_scheduler.next_run_time()
+    return settings
+
+
+# Read the saved resume / keywords / threshold / run time
+@app.get("/api/daily/settings")
+def get_daily_settings():
+    try:
+        daily_db.create_tables()
+        return _settings_response()
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to load daily settings"
+        ) from error
+
+
+# Save them and move the daily trigger to the new time
+@app.put("/api/daily/settings")
+def save_daily_settings(request: DailySettingsRequest):
+    if not daily_jobs.split_keywords(request.keywords):
+        raise HTTPException(status_code=422, detail="Add at least one keyword")
+
+    try:
+        daily_db.create_tables()
+        daily_db.save_settings(
+            request.resume_text.strip(),
+            request.keywords.strip(),
+            request.min_score,
+            request.run_hour,
+            request.run_minute,
+            request.enabled,
+        )
+        daily_scheduler.apply_schedule(
+            request.enabled, request.run_hour, request.run_minute
+        )
+        return _settings_response()
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to save daily settings"
+        ) from error
+
+
+# Run the daily job right now (same code the trigger runs every day)
+@app.post("/api/daily/run")
+def run_daily_now():
+    try:
+        return daily_jobs.run_daily()
+    except daily_jobs.RunAlreadyActiveError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except daily_jobs.DailyRunError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Daily run failed"
+        ) from error
+
+
+# The UI list: ONE day (default today), only jobs at or above the match percent
+@app.get("/api/daily/jobs")
+def get_daily_jobs(
+    min_score: Optional[float] = Query(None, ge=0, le=100),
+    day: Optional[date_type] = None,
+):
+    try:
+        run_date = day or daily_jobs.today()
+
+        if min_score is None:
+            min_score = daily_db.get_settings()["min_score"]
+
+        jobs = daily_db.list_matches(run_date, min_score)
+        total = daily_db.count_matches(run_date)
+
+        return {
+            "date": run_date.isoformat(),
+            "min_score": min_score,
+            "count": len(jobs),
+            "hidden_below_min": total - len(jobs),
+            "jobs": jobs,
+        }
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to retrieve daily jobs"
+        ) from error
 # Backend API: Retrieve analysis history
 @app.get("/api/analyses")
 def get_analyses():
