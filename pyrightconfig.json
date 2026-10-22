@@ -1,0 +1,13 @@
+{
+  "include": [
+    "backend"
+  ],
+  "extraPaths": [
+    "backend",
+    "./backend"
+  ],
+  "venvPath": "backend",
+  "venv": "Algonex",
+  "reportMissingImports": "none",
+  "reportMissingTypeStubs": false
+}

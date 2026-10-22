@@ -8,8 +8,15 @@ import json
 import os
 import re
 import smtplib
+import sys
 from email.message import EmailMessage
 from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+# Ensure backend directory is in sys.path for IDEs and scripts
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
 
 try:
     from bs4 import BeautifulSoup
@@ -21,8 +28,46 @@ try:
 except ImportError:
     requests = None
 
-from analyzer import analyze_resume
-import apply_db
+try:
+    from analyzer import analyze_resume
+except ImportError:
+    try:
+        from backend.analyzer import analyze_resume  # type: ignore
+    except ImportError:
+        def analyze_resume(resume_text: str, job_description: str) -> Dict[str, Any]:
+            return {"matched_score": 0.0, "matched_skills": [], "missing_skills": []}
+
+try:
+    import apply_db
+except ImportError:
+    try:
+        from backend import apply_db  # type: ignore
+    except ImportError:
+        apply_db = None  # type: ignore
+
+try:
+    import ai_analyzer
+except ImportError:
+    try:
+        from backend import ai_analyzer  # type: ignore
+    except ImportError:
+        ai_analyzer = None
+
+try:
+    import daily_db
+except ImportError:
+    try:
+        from backend import daily_db  # type: ignore
+    except ImportError:
+        daily_db = None
+
+try:
+    import job_fetcher
+except ImportError:
+    try:
+        from backend import job_fetcher  # type: ignore
+    except ImportError:
+        job_fetcher = None
 
 try:
     from dotenv import load_dotenv
@@ -55,18 +100,20 @@ class DailyLimitError(ApplyError):
     pass
 
 
-def _int_env(name, default):
+def _int_env(name: str, default: int) -> int:
     try:
-        return int(os.getenv(name, default))
-    except ValueError:
+        return int(os.getenv(name, str(default)))
+    except (ValueError, TypeError):
         return int(default)
 
 
-def is_valid_email(email):
-    return bool(email) and re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email) is not None
+def is_valid_email(email: Optional[str]) -> bool:
+    if not email or not isinstance(email, str):
+        return False
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()))
 
 
-def scrape_job_from_url(url: str, timeout: int = 15) -> dict:
+def scrape_job_from_url(url: str, timeout: int = 15) -> Dict[str, Any]:
     """
     Fetch an online job page, clean the HTML, and use Google GenAI to extract
     structured job information (title, company, description, apply_email, skills).
@@ -87,20 +134,20 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> dict:
 
     # 1. Check if the URL matches curated fallback jobs (Northwind Labs, Brightpath Systems)
     try:
-        import job_fetcher
-        for fj in getattr(job_fetcher, "FALLBACK_JOBS", []):
-            if fj.get("url") == url or ("northwind" in url.lower() and "northwind" in fj.get("company", "").lower()) or ("brightpath" in url.lower() and "brightpath" in fj.get("company", "").lower()):
-                return {
-                    "job_title": fj["title"],
-                    "company": fj["company"],
-                    "job_description": fj["description"],
-                    "apply_email": f"careers@{fj['company'].lower().replace(' ', '')}.com",
-                    "location": fj.get("location", "Online / Remote"),
-                    "job_type": fj.get("job_type", "Full-time"),
-                    "required_skills": ["Python", "FastAPI", "MySQL", "Docker", "REST APIs"],
-                    "job_url": url,
-                    "source": "curated_fallback"
-                }
+        if job_fetcher is not None:
+            for fj in getattr(job_fetcher, "FALLBACK_JOBS", []):
+                if fj.get("url") == url or ("northwind" in url.lower() and "northwind" in fj.get("company", "").lower()) or ("brightpath" in url.lower() and "brightpath" in fj.get("company", "").lower()):
+                    return {
+                        "job_title": fj["title"],
+                        "company": fj["company"],
+                        "job_description": fj["description"],
+                        "apply_email": f"careers@{fj['company'].lower().replace(' ', '')}.com",
+                        "location": fj.get("location", "Online / Remote"),
+                        "job_type": fj.get("job_type", "Full-time"),
+                        "required_skills": ["Python", "FastAPI", "MySQL", "Docker", "REST APIs"],
+                        "job_url": url,
+                        "source": "curated_fallback"
+                    }
     except Exception:
         pass
 
@@ -164,13 +211,17 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> dict:
 
     job_details = None
     try:
-        import ai_analyzer
-        job_details = ai_analyzer.extract_job_details_with_ai(clean_text, url=url)
+        if ai_analyzer is not None:
+            job_details = ai_analyzer.extract_job_details_with_ai(clean_text, url=url)
     except Exception:
         job_details = None
 
     if not job_details or not isinstance(job_details, dict):
-        h1_text = soup.find("h1").get_text(strip=True) if (soup and soup.find("h1")) else "Job Opportunity"
+        h1_text = "Job Opportunity"
+        if soup is not None:
+            h1_el = soup.find("h1")
+            if h1_el:
+                h1_text = h1_el.get_text(strip=True)
         title = og_title or h1_text
         company = og_company or "Hiring Company"
         at_match = re.search(r"at\s+([A-Z][A-Za-z0-9&.\s]+)", title)
@@ -195,30 +246,34 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> dict:
     return job_details
 
 
-def score_job(resume_text, job_description):
+def score_job(resume_text: str, job_description: str) -> Dict[str, Any]:
     """Score the job against the resume using Google GenAI, with fallback to keyword analyzer."""
     try:
-        import ai_analyzer
-        ai_raw = ai_analyzer.analyze_resume_with_ai(resume_text, job_description)
-        data = json.loads(ai_raw)
-        score = float(data.get("matched_score", data.get("match_score", 0.0)))
-        return {
-            "matched_score": score,
-            "matched_skills": data.get("matched_skills", []),
-            "missing_skills": data.get("missing_skills", []),
-            "suggestions": data.get("suggestions", []),
-            "summary": data.get("summary", ""),
-        }
+        if ai_analyzer is not None:
+            ai_raw = ai_analyzer.analyze_resume_with_ai(resume_text, job_description)
+            data = json.loads(ai_raw)
+            score = float(data.get("matched_score", data.get("match_score", 0.0)))
+            return {
+                "matched_score": score,
+                "matched_skills": data.get("matched_skills", []),
+                "missing_skills": data.get("missing_skills", []),
+                "suggestions": data.get("suggestions", []),
+                "summary": data.get("summary", ""),
+            }
     except Exception:
-        return analyze_resume(resume_text, job_description)
+        pass
+    return analyze_resume(resume_text, job_description)
 
 
-def build_cover_letter(applicant_name, job_title, company, matched_skills=None,
-                       resume_text=None, job_description=None):
+def build_cover_letter(applicant_name: str,
+                       job_title: str,
+                       company: str,
+                       matched_skills: Optional[List[str]] = None,
+                       resume_text: Optional[str] = None,
+                       job_description: Optional[str] = None) -> str:
     """Generate a tailored cover letter using Google GenAI if available, or fall back to template."""
-    if resume_text and job_description:
+    if resume_text and job_description and ai_analyzer is not None:
         try:
-            import ai_analyzer
             ai_letter = ai_analyzer.generate_cover_letter_with_ai(
                 applicant_name=applicant_name,
                 resume_text=resume_text,
@@ -249,8 +304,12 @@ def build_cover_letter(applicant_name, job_title, company, matched_skills=None,
     )
 
 
-def queue_application(resume_text=None, job_title=None, company=None, job_description=None,
-                      job_url=None, apply_email=None):
+def queue_application(resume_text: Optional[str] = None,
+                      job_title: Optional[str] = None,
+                      company: Optional[str] = None,
+                      job_description: Optional[str] = None,
+                      job_url: Optional[str] = None,
+                      apply_email: Optional[str] = None) -> Dict[str, Any]:
     """
     Queue a job application. If job_url is provided and details are missing,
     automatically scrape the online job details using Google GenAI.
@@ -262,9 +321,8 @@ def queue_application(resume_text=None, job_title=None, company=None, job_descri
     job_url = (job_url or "").strip() or None
 
     # Fallback to saved resume in daily_settings if not provided
-    if not resume_text:
+    if not resume_text and daily_db is not None:
         try:
-            import daily_db
             resume_text = (daily_db.get_settings().get("resume_text") or "").strip()
         except Exception:
             pass
@@ -285,6 +343,9 @@ def queue_application(resume_text=None, job_title=None, company=None, job_descri
 
     if apply_email and not is_valid_email(apply_email):
         raise InvalidApplicationError("apply_email is not a valid email address")
+
+    if apply_db is None:
+        raise ApplyError("Database module apply_db is not available")
 
     if apply_db.find_duplicate(job_title, company):
         raise DuplicateApplicationError(
@@ -321,7 +382,9 @@ def queue_application(resume_text=None, job_title=None, company=None, job_descri
     return apply_db.get_application(application_id)
 
 
-def auto_scrape_and_apply(job_url: str, resume_text: str = None, apply_email: str = None):
+def auto_scrape_and_apply(job_url: str,
+                          resume_text: Optional[str] = None,
+                          apply_email: Optional[str] = None) -> Dict[str, Any]:
     """Automatically scrape online job details from a URL, score with GenAI, and queue application."""
     scraped = scrape_job_from_url(job_url)
     return queue_application(
@@ -334,22 +397,27 @@ def auto_scrape_and_apply(job_url: str, resume_text: str = None, apply_email: st
     )
 
 
-def auto_scrape_and_apply_batch(keyword: str, resume_text: str = None, limit: int = 5,
-                                region: str = "global", min_score: float = None):
+def auto_scrape_and_apply_batch(keyword: str,
+                                resume_text: Optional[str] = None,
+                                limit: int = 5,
+                                region: str = "global",
+                                min_score: Optional[float] = None) -> Dict[str, Any]:
     """
     Search online jobs for a keyword, automatically scrape/parse job details,
     score each against the candidate's resume using Google GenAI, and auto-queue applications.
     """
-    import job_fetcher
-    jobs = job_fetcher.fetch_jobs(keyword, limit=limit, region=region)
+    if job_fetcher is not None:
+        jobs = job_fetcher.fetch_jobs(keyword, limit=limit, region=region)
+    else:
+        jobs = []
+
     queued = []
     skipped_duplicates = []
     low_matches = []
     errors = []
 
-    if not resume_text:
+    if not resume_text and daily_db is not None:
         try:
-            import daily_db
             resume_text = daily_db.get_settings().get("resume_text", "")
         except Exception:
             pass
@@ -399,8 +467,10 @@ def auto_scrape_and_apply_batch(keyword: str, resume_text: str = None, limit: in
     }
 
 
-
-def send_application_email(to_email, subject, body, resume_path=None):
+def send_application_email(to_email: str,
+                           subject: str,
+                           body: str,
+                           resume_path: Optional[str] = None) -> None:
     host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     port = _int_env("SMTP_PORT", 587)
     user = os.getenv("SMTP_USER")
@@ -416,7 +486,7 @@ def send_application_email(to_email, subject, body, resume_path=None):
     message["To"] = to_email
     message["Reply-To"] = sender
     message["Subject"] = subject
-    message.set_content(body)
+    message.set_content(body or "")
 
     if resume_path and Path(resume_path).is_file():
         path = Path(resume_path)
@@ -433,16 +503,19 @@ def send_application_email(to_email, subject, body, resume_path=None):
         server.send_message(message)
 
 
-def apply_to_application(application_id):
+def apply_to_application(application_id: int) -> Dict[str, Any]:
+    if apply_db is None:
+        raise ApplyError("Database module apply_db is not available")
+
     application = apply_db.get_application(application_id)
 
     if not application:
         raise ApplicationNotFoundError(f"Application {application_id} not found")
 
-    if application["status"] == "sent":
+    if application.get("status") == "sent":
         return application
 
-    if not application["apply_email"]:
+    if not application.get("apply_email"):
         apply_db.update_status(
             application_id,
             "manual_required",
@@ -455,13 +528,13 @@ def apply_to_application(application_id):
         raise DailyLimitError(f"Daily limit of {max_per_day} applications reached")
 
     applicant_name = os.getenv("APPLICANT_NAME", "Applicant")
-    subject = f"Application for {application['job_title']} - {applicant_name}"
+    subject = f"Application for {application.get('job_title', 'Role')} - {applicant_name}"
 
     try:
         send_application_email(
             application["apply_email"],
             subject,
-            application["cover_letter"],
+            application.get("cover_letter") or "",
             os.getenv("RESUME_PDF_PATH"),
         )
         apply_db.update_status(application_id, "sent", "Application email sent")
@@ -484,4 +557,4 @@ if __name__ == "__main__":
     print("3. Testing Job Scraping for Northwind Labs URL...")
     scraped = scrape_job_from_url("https://northwindlabs.com/careers/backend-python")
     print(f"   Scraped: '{scraped['job_title']}' at '{scraped['company']}' (Skills: {scraped['required_skills']})")
-    print("Auto-Apply Engine verified successfully!")
+    print("Auto-Apply Engine verified successfully!")
