@@ -8,3 +8,4 @@ requests
 httpx
 apscheduler>=3.10,<4
 tzdata
+beautifulsoup4

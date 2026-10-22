@@ -139,14 +139,23 @@ Apply now
 
 '''
 if __name__ == "__main__":
-    result = analyze_resume_with_ai(resume_text, jd_text)
     try:
+        result = analyze_resume_with_ai(resume_text, jd_text)
         data = json.loads(result)
-        print("Matchscore:", data["matched_score"])
-        print("Matching skills:", data["matched_skills"])
-        print("Missing skills:", data["missing_skills"])
-        print("Suggestions:", data["suggestions"])
-        print("Summary:", data["summary"])
+        print("Matchscore:", data.get("matched_score", data.get("match_score", 0)))
+        print("Matching skills:", data.get("matched_skills", []))
+        print("Missing skills:", data.get("missing_skills", []))
+        print("Suggestions:", data.get("suggestions", []))
+        print("Summary:", data.get("summary", ""))
+    except ValueError as ve:
+        print(f"AI Analyzer Note: {ve}")
+        print("Using JobNex keyword analyzer fallback:")
+        from analyzer import analyze_resume
+        fb = analyze_resume(resume_text, jd_text)
+        print("Fallback Matchscore:", fb["matched_score"])
+        print("Matching skills:", fb["matched_skills"])
+        print("Missing skills:", fb["missing_skills"])
+        print("Suggestions:", fb["suggestions"])
     except (json.JSONDecodeError, KeyError) as error:
         print("Hey! Fix the json or column names")
-        print("Hey! Error is:", error)
+        print("Hey! Error is:", error)

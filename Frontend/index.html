@@ -1,35 +1,425 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width = device-width, initial-scale = 1.0">
-    <title> JobNex </title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JobNex | Intelligent Career & Job Automation Platform</title>
+    <meta name="description" content="AI-powered resume analysis, job matching, automated applications, employee referrals, and interview preparation.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
+    <header class="navbar">
+        <div class="nav-brand">
+            <div class="brand-logo">
+                <span class="logo-icon">⚡</span>
+                <span class="brand-text">Job<strong>Nex</strong></span>
+            </div>
+            <span class="badge-sub">an Algonex product</span>
+        </div>
+        
+        <nav class="nav-tabs" id="main-nav">
+            <button class="nav-btn active" data-tab="tab-analyzer" id="btn-tab-analyzer">📊 Resume Analyzer</button>
+            <button class="nav-btn" data-tab="tab-workbench" id="btn-tab-workbench">🗄️ MySQL Workbench</button>
+            <button class="nav-btn" data-tab="tab-jobs" id="btn-tab-jobs">💼 Live Jobs</button>
+            <button class="nav-btn" data-tab="tab-interview" id="btn-tab-interview">🎯 Interview Prep</button>
+            <button class="nav-btn" data-tab="tab-referrals" id="btn-tab-referrals">✉️ Referral & HR</button>
+            <button class="nav-btn" data-tab="tab-applications" id="btn-tab-applications">🚀 Auto-Apply</button>
+            <button class="nav-btn" data-tab="tab-chat" id="btn-tab-chat">🤖 AI Chatbot</button>
+        </nav>
+
+        <div class="nav-actions">
+            <div class="server-status" id="server-status" title="Backend Status">
+                <span class="status-dot"></span>
+                <span class="status-text">Backend Ready</span>
+            </div>
+        </div>
+    </header>
+
     <main class="container">
-        <h1> welcome to jobNex </h1>
-        <p> Get ready to see your Resume fit for given Job description</p>
-        <form id="analyze-Form">
-            <label for="resume_text"> Give Resume</label>
-            <textarea id="resume_text" placeholder="Upload your resume here" required></textarea>
-            <label for="jd_text"> Job description</label>
-            <textarea id="jd_text" placeholder="Passte your JD here..." required></textarea>
+        <!-- GLOBAL TOAST NOTIFICATION -->
+        <div id="toast" class="toast" role="alert" aria-live="assertive" hidden></div>
 
-            <button type="Submit" id="analyze-button"> Analyze-Resume </button>
-        </form>
+        <!-- ================= TAB 1: RESUME ANALYZER ================= -->
+        <section id="tab-analyzer" class="tab-content active">
+            <div class="section-header">
+                <div>
+                    <h2>AI Resume & Job Match Analyzer</h2>
+                    <p class="subtitle">Evaluate your resume against target roles, identify missing skills, and save analyses to MySQL Workbench.</p>
+                </div>
+                <div class="quick-samples">
+                    <button type="button" class="btn-secondary btn-sm" id="btn-load-sample">Load Sample Python Dev Data</button>
+                </div>
+            </div>
 
-        <p id='status' role='status'></p>
+            <div class="analyzer-grid">
+                <!-- Inputs Column -->
+                <div class="card form-card">
+                    <form id="analyze-form">
+                        <div class="form-group">
+                            <div class="label-row">
+                                <label for="resume_text">Candidate Resume Text</label>
+                                <span class="char-count" id="resume-count">0 chars</span>
+                            </div>
+                            <textarea id="resume_text" rows="8" placeholder="Paste your resume content or skills summary here..." required></textarea>
+                        </div>
 
-        <section id="results" hidden>
-            <h2> Analyze Results</h2>
-            <pre id="result-data"></pre>
+                        <div class="form-group" style="background:rgba(6, 182, 212, 0.06);border:1px dashed rgba(6, 182, 212, 0.3);padding:0.85rem;border-radius:var(--radius-md);">
+                            <label for="auto-scrape-url">🔗 Or Automatically Scrape Job Posting with GenAI</label>
+                            <div style="display:flex;gap:0.5rem;margin-top:0.35rem;">
+                                <input type="url" id="auto-scrape-url" placeholder="Paste job URL: https://company.com/job-posting">
+                                <button type="button" class="btn-secondary" id="btn-auto-scrape-genai" style="white-space:nowrap;">⚡ Scrape with GenAI</button>
+                            </div>
+                            <span class="help-text">Automatically extracts Job Title, Company, Description, and Skills via Google GenAI.</span>
+                        </div>
+
+                        <div class="form-group">
+                            <div class="label-row">
+                                <label for="jd_text">Target Job Description (JD)</label>
+                                <span class="char-count" id="jd-count">0 chars</span>
+                            </div>
+                            <textarea id="jd_text" rows="8" placeholder="Paste target job requirements and qualifications here (or use Auto-Scrape above)..." required></textarea>
+                        </div>
+
+                        <button type="submit" class="btn-primary" id="analyze-button">
+                            <span class="btn-text">⚡ Analyze Resume & Save</span>
+                            <span class="spinner" hidden></span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Results Column -->
+                <div class="card results-card" id="results-panel">
+                    <div class="empty-state" id="empty-results">
+                        <div class="empty-icon">📈</div>
+                        <h3>Ready for Analysis</h3>
+                        <p>Paste your resume and job description on the left, then click <strong>Analyze Resume</strong>. Results are automatically computed and persisted into your MySQL Workbench database.</p>
+                    </div>
+
+                    <div id="active-results" hidden>
+                        <div class="results-header">
+                            <div>
+                                <span class="badge-saved" id="analysis-save-badge">Saved to Workbench #0</span>
+                                <h3 id="result-match-title">Role Alignment Analysis</h3>
+                            </div>
+                            <div class="score-circle" id="score-circle">
+                                <span class="score-number" id="score-number">0%</span>
+                                <span class="score-label">Match</span>
+                            </div>
+                        </div>
+
+                        <!-- Matched Skills -->
+                        <div class="skills-block">
+                            <h4>✅ Matched Skills (<span id="matched-count">0</span>)</h4>
+                            <div class="badges-container" id="matched-skills-tags"></div>
+                        </div>
+
+                        <!-- Missing Skills -->
+                        <div class="skills-block">
+                            <h4>⚠️ Missing Skills (<span id="missing-count">0</span>)</h4>
+                            <div class="badges-container" id="missing-skills-tags"></div>
+                        </div>
+
+                        <!-- Actionable Suggestions -->
+                        <div class="suggestions-block">
+                            <h4>💡 Improvement Recommendations</h4>
+                            <ul class="suggestions-list" id="suggestions-list"></ul>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="results-actions">
+                            <button class="btn-secondary btn-sm" id="btn-go-workbench">View in Workbench ➔</button>
+                            <button class="btn-secondary btn-sm" id="btn-prep-interview">Prep Interview for this JD ➔</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= TAB 2: MYSQL WORKBENCH VIEWER ================= -->
+        <section id="tab-workbench" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>MySQL Workbench Analysis Records</h2>
+                    <p class="subtitle">Directly review historical resume assessments stored in the MySQL <code>resume_analyzer</code> database table.</p>
+                </div>
+                <button type="button" class="btn-secondary btn-sm" id="btn-refresh-workbench">🔄 Refresh Workbench</button>
+            </div>
+
+            <div class="card workbench-card">
+                <div class="table-responsive">
+                    <table class="data-table" id="workbench-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Date & Time</th>
+                                <th>Match Score</th>
+                                <th>Matched Skills</th>
+                                <th>Missing Skills</th>
+                                <th>Resume / JD Preview</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workbench-tbody">
+                            <tr><td colspan="7" class="text-center py-4">Loading saved analyses from MySQL...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= TAB 3: LIVE JOB SEARCH ================= -->
+        <section id="tab-jobs" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>Live Tech Job Search</h2>
+                    <p class="subtitle">Explore vetted software engineering jobs across global & regional tech hubs, with built-in Northwind Labs and Brightpath Systems roles.</p>
+                </div>
+            </div>
+
+            <div class="card search-bar-card">
+                <form id="job-search-form" class="search-form-row">
+                    <div class="input-with-icon">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="job-keyword" placeholder="Job title, skill, or company (e.g. Python, Northwind Labs, Brightpath, React)" value="Python" required>
+                    </div>
+                    <select id="job-region" class="select-dropdown">
+                        <option value="global">🌍 Global (Remote)</option>
+                        <option value="us">🇺🇸 United States</option>
+                        <option value="india">🇮🇳 India</option>
+                        <option value="bengaluru">🏙️ Bengaluru</option>
+                    </select>
+                    <button type="submit" class="btn-primary" id="btn-search-jobs">Search Openings</button>
+                </form>
+            </div>
+
+            <div id="jobs-status-bar" class="jobs-info-bar">
+                <span id="jobs-count-text">Ready to search.</span>
+            </div>
+
+            <div class="jobs-grid" id="jobs-grid">
+                <!-- Dynamically loaded jobs -->
+            </div>
+        </section>
+
+        <!-- ================= TAB 4: INTERVIEW PREPARATION (WITH ANSWER TIPS) ================= -->
+        <section id="tab-interview" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>Interview Preparation & Detailed Answer Tips</h2>
+                    <p class="subtitle">Generate realistic technical, system design, and STAR behavioral questions complete with in-depth <strong>Answer Tips</strong> and frameworks.</p>
+                </div>
+            </div>
+
+            <div class="interview-layout">
+                <div class="card form-card">
+                    <form id="interview-prep-form">
+                        <div class="form-group">
+                            <label for="prep-role">Target Role / Job Title</label>
+                            <input type="text" id="prep-role" placeholder="e.g. Senior Python Backend Developer" value="Senior Python Backend Developer" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="prep-jd">Target Job Description (Optional)</label>
+                            <textarea id="prep-jd" rows="5" placeholder="Paste JD excerpt to tailor questions specifically..."></textarea>
+                        </div>
+                        <button type="submit" class="btn-primary" id="btn-generate-prep">
+                            <span>🎯 Generate Questions & Answer Tips</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div class="card prep-results-card">
+                    <div id="prep-empty" class="empty-state">
+                        <div class="empty-icon">💡</div>
+                        <h3>No Interview Questions Yet</h3>
+                        <p>Enter your target role and click <strong>Generate Questions & Answer Tips</strong> to reveal comprehensive interview guidance.</p>
+                    </div>
+                    <div id="prep-container" class="prep-accordion" hidden>
+                        <!-- Dynamic questions with answer tips -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= TAB 5: REFERRALS & HR EMAIL GENERATOR ================= -->
+        <section id="tab-referrals" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>Employee Referral & HR Outreach Generator</h2>
+                    <p class="subtitle">Scrape HR emails from postings and compose high-converting referral requests for top companies like Google, startups, and tech firms.</p>
+                </div>
+            </div>
+
+            <div class="referral-grid">
+                <!-- Left: HR Scraper & Inputs -->
+                <div class="card form-card">
+                    <h3>1. Automatic HR Email Scraper</h3>
+                    <div class="form-group">
+                        <label for="scrape-url">Job Listing / Company Careers URL</label>
+                        <div class="url-input-group">
+                            <input type="url" id="scrape-url" placeholder="https://company.com/careers/job-123">
+                            <button type="button" class="btn-secondary" id="btn-scrape-hr">Scrape HR Contact</button>
+                        </div>
+                        <div id="scrape-result" class="scrape-result-box" hidden></div>
+                    </div>
+
+                    <hr class="divider">
+
+                    <h3>2. Referral Email Parameters</h3>
+                    <form id="referral-gen-form">
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="ref-company">Target Company</label>
+                                <input type="text" id="ref-company" value="Google" required>
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="ref-title">Target Role</label>
+                                <input type="text" id="ref-title" value="Software Engineer - Backend" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group flex-1">
+                                <label for="ref-referrer">Referrer / Contact Name</label>
+                                <input type="text" id="ref-referrer" value="Alex (Team Member)">
+                            </div>
+                            <div class="form-group flex-1">
+                                <label for="ref-access">Posting Access Type</label>
+                                <select id="ref-access" class="select-dropdown">
+                                    <option value="public">🌐 Public Job Portal Link</option>
+                                    <option value="private">🔒 Private / Internal Requisition ID</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="ref-job-id">Job Link or Requisition ID</label>
+                            <input type="text" id="ref-job-id" value="https://careers.google.com/jobs/results/12345" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="ref-skills">Key Skills to Highlight (Comma separated)</label>
+                            <input type="text" id="ref-skills" value="Python, FastAPI, MySQL, Distributed Architecture, Docker">
+                        </div>
+
+                        <button type="submit" class="btn-primary" id="btn-generate-referral">
+                            <span>✉️ Generate Referral Email</span>
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Right: Generated Email Preview -->
+                <div class="card email-preview-card">
+                    <div class="email-preview-header">
+                        <h3>Generated Outreach Email</h3>
+                        <button type="button" class="btn-secondary btn-sm" id="btn-copy-email">📋 Copy Email</button>
+                    </div>
+
+                    <div class="email-meta">
+                        <div class="meta-row"><strong>Subject:</strong> <span id="preview-subject">Employee Referral Request: Software Engineer at Google</span></div>
+                    </div>
+
+                    <textarea id="preview-body" class="email-textarea" rows="14" spellcheck="false"></textarea>
+
+                    <div class="email-send-box">
+                        <div class="send-row">
+                            <input type="email" id="send-target-email" placeholder="Recipient email address (e.g. referrer@google.com or hr@company.com)">
+                            <button type="button" class="btn-primary" id="btn-send-email-now">Direct Send (SMTP)</button>
+                        </div>
+                        <span class="help-text">Configure SMTP credentials in <code>backend/.env</code> for live outbound email sending.</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= TAB 6: AUTO-APPLY QUEUE ================= -->
+        <section id="tab-applications" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>Auto-Apply Application Tracker</h2>
+                    <p class="subtitle">Review queued applications, tailored cover letters, and approve 1-click email submissions.</p>
+                </div>
+                <button type="button" class="btn-secondary btn-sm" id="btn-refresh-apps">🔄 Refresh Applications</button>
+            </div>
+
+            <div class="card applications-card">
+                <div class="table-responsive">
+                    <table class="data-table" id="apps-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Company</th>
+                                <th>Job Title</th>
+                                <th>Score</th>
+                                <th>Recruiter Email</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="apps-tbody">
+                            <tr><td colspan="8" class="text-center py-4">Loading applications...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= TAB 7: AI CHATBOT ================= -->
+        <section id="tab-chat" class="tab-content" hidden>
+            <div class="section-header">
+                <div>
+                    <h2>JobNex AI Career Assistant</h2>
+                    <p class="subtitle">Ask any question about resume refinement, interview strategy, cold emails, or job search workflows.</p>
+                </div>
+                <span class="badge-tag" id="chat-mode-badge">Connected: Gemini AI + Smart Fallback</span>
+            </div>
+
+            <div class="card chat-card">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message assistant-msg">
+                        <div class="msg-avatar">⚡</div>
+                        <div class="msg-bubble">
+                            <p>Hi there! I am your <strong>JobNex Career Assistant</strong>. How can I help you today? You can ask about:</p>
+                            <ul>
+                                <li>Optimizing your resume keywords for ATS scanners</li>
+                                <li>Structuring cold referral outreach for Google or startups</li>
+                                <li>Preparing technical or behavioral answers using the STAR method</li>
+                                <li>Automating your daily job application pipeline</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chat-quick-prompts">
+                    <button class="prompt-pill" data-prompt="How do I increase my resume match score?">📈 Improve Resume Score</button>
+                    <button class="prompt-pill" data-prompt="What is the best STAR method answer template?">🎯 STAR Method Template</button>
+                    <button class="prompt-pill" data-prompt="How should I ask a Google employee for a referral?">✉️ Google Referral Tips</button>
+                    <button class="prompt-pill" data-prompt="What are key skills for Python Backend Engineer?">🐍 Python Backend Skills</button>
+                </div>
+
+                <form id="chat-form" class="chat-input-row">
+                    <input type="text" id="chat-input" placeholder="Type your career or interview question..." autocomplete="off" required>
+                    <button type="submit" class="btn-primary" id="btn-send-chat">Send ➔</button>
+                </form>
+            </div>
         </section>
     </main>
 
+    <!-- DETAIL MODAL FOR WORKBENCH / APPLICATIONS -->
+    <div id="detail-modal" class="modal-overlay" hidden>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="modal-title">Analysis Detail</h3>
+                <button type="button" class="modal-close" id="btn-modal-close">✕</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
-
 </html>

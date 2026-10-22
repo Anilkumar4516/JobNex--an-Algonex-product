@@ -81,7 +81,13 @@ def find_duplicate(job_title, company):
 
 def get_application(application_id):
     query = "SELECT * FROM job_applications WHERE application_id = %s"
-    return _execute(query, (application_id,), fetch="one")
+    row = _execute(query, (application_id,), fetch="one")
+    if row:
+        if hasattr(row.get("created_at"), "isoformat"):
+            row["created_at"] = row["created_at"].isoformat()
+        if hasattr(row.get("updated_at"), "isoformat"):
+            row["updated_at"] = row["updated_at"].isoformat()
+    return row
 
 
 def list_applications(limit=20):
@@ -92,7 +98,13 @@ def list_applications(limit=20):
         ORDER BY application_id DESC
         LIMIT %s
     """
-    return _execute(query, (limit,), fetch="all")
+    rows = _execute(query, (limit,), fetch="all") or []
+    for r in rows:
+        if hasattr(r.get("created_at"), "isoformat"):
+            r["created_at"] = r["created_at"].isoformat()
+        if hasattr(r.get("updated_at"), "isoformat"):
+            r["updated_at"] = r["updated_at"].isoformat()
+    return rows
 
 
 def update_status(application_id, status, message=None):

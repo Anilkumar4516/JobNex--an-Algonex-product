@@ -204,3 +204,19 @@ def should_catch_up(settings, now):
     run_time = now.replace(hour=settings["run_hour"], minute=settings["run_minute"],
                            second=0, microsecond=0)
     return now >= run_time
+
+
+if __name__ == "__main__":
+    print("JobNex Daily Job Matching Runner")
+    try:
+        daily_db.create_tables()
+        settings = daily_db.get_settings()
+        print(f"Current settings - enabled: {settings['enabled']}, keywords: '{settings['keywords']}', min_score: {settings['min_score']}")
+        if not settings["resume_text"].strip() or not settings["keywords"].strip():
+            print("Note: Configure resume_text and keywords in daily settings before triggering a full run.")
+        else:
+            print("Starting daily job run...")
+            summary = run_daily()
+            print("Daily run completed successfully:", summary)
+    except Exception as exc:
+        print(f"Daily run note: {exc}")

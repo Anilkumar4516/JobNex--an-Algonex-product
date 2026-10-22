@@ -13,11 +13,34 @@ import auto_apply
 import daily_db
 import daily_jobs
 import daily_scheduler
-from job_fetcher import fetch_jobs, JobFetchError
+from job_fetcher import fetch_jobs, JobFetchError, job_source, normalize_region
 
 
 @asynccontextmanager
 async def lifespan(app):
+    try:
+        apply_db.create_table()
+        daily_db.create_tables()
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS resume_analyzer (
+                Analysis_id INT AUTO_INCREMENT PRIMARY KEY,
+                resume_text LONGTEXT NOT NULL,
+                jd_text LONGTEXT NOT NULL,
+                matched_skills JSON NULL,
+                missing_skills JSON NULL,
+                matched_score DECIMAL(5,2) NOT NULL DEFAULT 0,
+                suggestions JSON NULL,
+                created_At TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"[Lifespan] DB init note: {e}")
+
     # Start the daily trigger when the API starts, stop it when the API stops.
     daily_scheduler.start()
     yield
@@ -114,14 +137,18 @@ class queueApplicationRequest(BaseModel):
 
 # Step 1: find real jobs for a keyword
 @app.get("/api/jobs/search")
-def search_jobs(keyword: str = Query(..., min_length=2), limit: int = 10):
+def search_jobs(keyword: str = Query(..., min_length=2), limit: int = 10,
+                region: str = "global"):
     try:
-        return {"jobs": fetch_jobs(keyword, limit)}
+        return {
+            "region": region.strip().lower(),
+            "source": job_source(region),
+            "jobs": fetch_jobs(keyword, limit, region),
+        }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except JobFetchError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
-
 
 # Step 2: score the job, write a cover letter and queue it for approval
 @app.post("/api/applications")
@@ -275,51 +302,290 @@ def get_daily_jobs(
             status_code=500,
             detail="Failed to retrieve daily jobs"
         ) from error
-# Backend API: Retrieve analysis history
+# Backend API: Retrieve analysis history for Workbench
 @app.get("/api/analyses")
 def get_analyses():
     connection = None
     cursor = None
 
     try:
-        # Connect to MySQL
         connection = get_connection()
-
-        # Create a cursor that returns dictionary rows
         cursor = connection.cursor(dictionary=True)
-
-        # Fetch the latest 20 analyses
         query = """SELECT
                 Analysis_id,
                 matched_score,
                 matched_skills,
                 missing_skills,
+                suggestions,
+                SUBSTRING(resume_text, 1, 100) AS resume_preview,
+                SUBSTRING(jd_text, 1, 100) AS jd_preview,
                 created_At
             FROM resume_analyzer
             ORDER BY Analysis_id DESC
-            LIMIT 20"""
+            LIMIT 50"""
 
         cursor.execute(query)
         analyses = cursor.fetchall()
 
         for analysis in analyses:
-            for field in ("matched_skills", "missing_skills"):
-                value = analysis[field]
-
+            for field in ("matched_skills", "missing_skills", "suggestions"):
+                value = analysis.get(field)
                 if isinstance(value, str):
-                    analysis[field] = json.loads(value)
+                    try:
+                        analysis[field] = json.loads(value)
+                    except Exception:
+                        pass
+            if hasattr(analysis.get("created_At"), "isoformat"):
+                analysis["created_At"] = analysis["created_At"].isoformat()
 
         return {"analyses": analyses}
 
     except Exception as error:
         raise HTTPException(
             status_code=500,
-            detail="Failed to retrieve analyses"
+            detail=f"Failed to retrieve analyses: {error}"
         ) from error
 
     finally:
         if cursor is not None:
             cursor.close()
-
         if connection is not None and connection.is_connected():
             connection.close()
+
+
+@app.get("/api/analyses/{analysis_id}")
+def get_analysis_detail(analysis_id: int):
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT * FROM resume_analyzer WHERE Analysis_id = %s",
+            (analysis_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+
+        for field in ("matched_skills", "missing_skills", "suggestions"):
+            val = row.get(field)
+            if isinstance(val, str):
+                try:
+                    row[field] = json.loads(val)
+                except Exception:
+                    pass
+        if hasattr(row.get("created_At"), "isoformat"):
+            row["created_At"] = row["created_At"].isoformat()
+
+        return row
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+
+@app.delete("/api/analyses/{analysis_id}")
+def delete_analysis(analysis_id: int):
+    connection = None
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM resume_analyzer WHERE Analysis_id = %s", (analysis_id,))
+        connection.commit()
+        return {"status": "deleted", "analysis_id": analysis_id}
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+
+# ---------------- Chatbot Endpoint ----------------
+
+class ChatRequest(BaseModel):
+    message: str
+    history: Optional[list] = None
+
+
+@app.post("/api/chat")
+def chat_with_jobnex(req: ChatRequest):
+    import ai_analyzer
+    return ai_analyzer.chat_with_assistant(req.message, req.history)
+
+
+# ---------------- Interview Prep Endpoint ----------------
+
+class InterviewPrepRequest(BaseModel):
+    job_title: str
+    job_description: Optional[str] = ""
+    resume_text: Optional[str] = ""
+
+
+@app.post("/api/interview/prep")
+def interview_prep_endpoint(req: InterviewPrepRequest):
+    import interview_prep
+    return interview_prep.generate_interview_prep(
+        job_title=req.job_title,
+        job_description=req.job_description,
+        resume_text=req.resume_text,
+    )
+
+
+# ---------------- Email Referral & HR Outreach Endpoints ----------------
+
+class ReferralEmailRequest(BaseModel):
+    applicant_name: Optional[str] = None
+    job_title: str
+    job_id_or_url: str
+    target_company: Optional[str] = "Google"
+    referrer_name: Optional[str] = "Team Member"
+    top_skills: Optional[list] = None
+    portfolio_or_linkedin: Optional[str] = ""
+    access_type: Optional[str] = "public"
+
+
+@app.post("/api/referrals/generate")
+def generate_referral_endpoint(req: ReferralEmailRequest):
+    import automatic_job_email_referrals
+    return automatic_job_email_referrals.generate_google_referral_email(
+        applicant_name=req.applicant_name,
+        job_title=req.job_title,
+        job_id_or_url=req.job_id_or_url,
+        target_company=req.target_company,
+        referrer_name=req.referrer_name,
+        top_skills=req.top_skills,
+        portfolio_or_linkedin=req.portfolio_or_linkedin,
+        access_type=req.access_type,
+    )
+
+
+class DirectRecruiterEmailRequest(BaseModel):
+    applicant_name: Optional[str] = None
+    job_title: str
+    company: str
+    hr_email: Optional[str] = None
+    recruiter_name: Optional[str] = None
+    matched_skills: Optional[list] = None
+    resume_summary: Optional[str] = ""
+
+
+@app.post("/api/referrals/generate-recruiter")
+def generate_recruiter_endpoint(req: DirectRecruiterEmailRequest):
+    import automatic_job_email_referrals
+    return automatic_job_email_referrals.generate_direct_recruiter_email(
+        applicant_name=req.applicant_name,
+        job_title=req.job_title,
+        company=req.company,
+        hr_email=req.hr_email,
+        recruiter_name=req.recruiter_name,
+        matched_skills=req.matched_skills,
+        resume_summary=req.resume_summary,
+    )
+
+
+class HRScrapeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/hr/scrape")
+def scrape_hr_endpoint(req: HRScrapeRequest):
+    import automatic_job_email_referrals
+    return automatic_job_email_referrals.scrape_hr_contacts_from_url(req.url)
+
+
+class SendEmailRequest(BaseModel):
+    to_email: str
+    subject: str
+    body: str
+
+
+@app.post("/api/referrals/send")
+def send_referral_endpoint(req: SendEmailRequest):
+    import automatic_job_email_referrals
+    try:
+        return automatic_job_email_referrals.send_referral_email_direct(
+            to_email=req.to_email,
+            subject=req.subject,
+            body=req.body,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------- Batch Auto-Apply Endpoint ----------------
+
+class AutoBatchRequest(BaseModel):
+    keyword: str
+    resume_text: Optional[str] = None
+    limit: Optional[int] = 5
+    region: Optional[str] = "global"
+
+
+@app.post("/api/applications/auto-batch")
+def auto_batch_apply_endpoint(req: AutoBatchRequest):
+    try:
+        return auto_apply.auto_scrape_and_apply_batch(
+            keyword=req.keyword,
+            resume_text=req.resume_text,
+            limit=req.limit,
+            region=req.region,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ---------------- GenAI Job Data Scraping Endpoints ----------------
+
+class JobScrapeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/jobs/scrape")
+def scrape_job_endpoint(req: JobScrapeRequest):
+    """
+    Automatically scrape and extract structured job data from any job URL
+    using Google GenAI (Gemini) with intelligent fallback.
+    """
+    try:
+        details = auto_apply.scrape_job_from_url(req.url)
+        return details
+    except auto_apply.ApplyError as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to scrape job data: {err}")
+
+
+class AutoScrapeApplyRequest(BaseModel):
+    job_url: str
+    resume_text: Optional[str] = None
+    apply_email: Optional[str] = None
+
+
+@app.post("/api/applications/auto-scrape-apply")
+def auto_scrape_apply_endpoint(req: AutoScrapeApplyRequest):
+    """
+    Automatically scrape online job details from a URL using GenAI,
+    score against the candidate's resume, generate a cover letter, and queue application.
+    """
+    try:
+        return auto_apply.auto_scrape_and_apply(
+            job_url=req.job_url,
+            resume_text=req.resume_text,
+            apply_email=req.apply_email,
+        )
+    except auto_apply.DuplicateApplicationError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    except (auto_apply.InvalidApplicationError, auto_apply.LowMatchError) as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Auto-scrape apply failed: {err}")
+

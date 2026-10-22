@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS daily_settings (
 CREATE TABLE IF NOT EXISTS daily_job_matches (
     id INT AUTO_INCREMENT PRIMARY KEY,
     run_date DATE NOT NULL,
+    keyword VARCHAR(100) NULL,
     job_title VARCHAR(255) NOT NULL,
     company VARCHAR(255) NOT NULL,
     location VARCHAR(255) NULL,
@@ -25,8 +26,12 @@ CREATE TABLE IF NOT EXISTS daily_job_matches (
     match_score DECIMAL(5,2) NOT NULL DEFAULT 0,
     matched_skills TEXT NULL,
     missing_skills TEXT NULL,
+    suggestions TEXT NULL,
+    summary TEXT NULL,
+    scored_by VARCHAR(50) NULL DEFAULT 'keyword',
     description TEXT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_run_date (run_date),
     INDEX idx_run_score (run_date, match_score)
 );
+
