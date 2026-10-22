@@ -8,18 +8,29 @@ _backend_dir = str(Path(__file__).resolve().parent)
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
-from dotenv import load_dotenv  # type: ignore
-from google import genai  # type: ignore
+try:
+    from dotenv import load_dotenv  # type: ignore
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
+
+try:
+    from google import genai  # type: ignore
+except ImportError:
+    genai = None  # type: ignore
 
 
-def run_test() -> bool:
-    # Load .env file from backend directory
+def _load_backend_env() -> None:
+    """Load the backend .env file when present, while tolerating missing dotenv."""
     env_file = Path(__file__).resolve().parent / ".env"
     if env_file.is_file():
         load_dotenv(dotenv_path=env_file)
     else:
         load_dotenv()
 
+
+def run_test() -> bool:
+    _load_backend_env()
     api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
 
     print("========================================")
@@ -37,6 +48,12 @@ def run_test() -> bool:
         print("========================================")
         return True
 
+    if genai is None:
+        print("[ERROR] 'google-genai' is not installed in the active environment.")
+        print("Install it with: pip install google-genai")
+        print("========================================")
+        return False
+
     print("[INFO] GEMINI_API_KEY found. Testing connection to Google Gemini...")
     try:
         client = genai.Client(api_key=api_key)
@@ -47,21 +64,23 @@ def run_test() -> bool:
             try:
                 response = client.models.generate_content(
                     model=model,
-                    contents="Say hello and confirm API is connected in under 10 words."
+                    contents="Say hello and confirm API is connected in under 10 words.",
                 )
                 text = (getattr(response, "text", "") or "").strip()
                 print(f"[SUCCESS] Connected to Google Gemini ({model})!")
                 print(f"Response: {text}")
                 print("========================================")
                 return True
-            except Exception as err:
+            except Exception as err:  # pragma: no cover - model-specific runtime issue
                 last_error = err
                 continue
 
-        print(f"[WARNING] Could not reach models. Details: {last_error}")
+        print(f"[WARNING] Could not reach any Gemini model. Details: {last_error}")
+        print("========================================")
         return False
     except Exception as error:
         print(f"[ERROR] Gemini Client initialization failed: {error}")
+        print("========================================")
         return False
 
 
