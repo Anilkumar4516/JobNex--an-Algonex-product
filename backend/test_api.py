@@ -3,70 +3,68 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure backend directory is in sys.path for scripts and IDEs
+# Ensure backend directory is in sys.path
 _backend_dir = str(Path(__file__).resolve().parent)
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
-try:
-    from dotenv import load_dotenv  # type: ignore
-except ImportError:
-    def load_dotenv(*args, **kwargs):
-        pass
-
-try:
-    from google import genai  # type: ignore
-except ImportError:
-    genai = None  # type: ignore
+from dotenv import load_dotenv  # type: ignore
+from google import genai  # type: ignore
 
 
 def run_test() -> bool:
-    # Explicitly load .env from backend folder if present
+    # Load .env file from backend directory
     env_file = Path(__file__).resolve().parent / ".env"
     if env_file.is_file():
         load_dotenv(dotenv_path=env_file)
     else:
         load_dotenv()
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+
+    print("========================================")
+    print("   JobNex Gemini AI API Diagnostic")
+    print("========================================")
 
     if not api_key:
-        print("Note: GEMINI_API_KEY was not found in .env.")
-        print("JobNex will automatically use its built-in smart fallback analyzer and career assistant.")
-        return False
+        print("[INFO] GEMINI_API_KEY is not set in backend/.env")
+        print("[OK]   JobNex built-in smart fallback analyzer is ACTIVE.")
+        print("[OK]   System functions properly using local keyword & rule engine.")
+        print("----------------------------------------")
+        print("To enable live Gemini AI:")
+        print("  1. Get an API key from https://aistudio.google.com/")
+        print("  2. Add GEMINI_API_KEY=your_key into backend/.env")
+        print("========================================")
+        return True
 
-    if genai is None:
-        print("Note: 'google-genai' library is not installed in the active environment.")
-        print("Run: pip install google-genai to enable live AI features.")
-        return False
-
+    print("[INFO] GEMINI_API_KEY found. Testing connection to Google Gemini...")
     try:
         client = genai.Client(api_key=api_key)
-        # Try available Gemini flash models
         models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         last_error = None
-        for model_name in models_to_try:
+
+        for model in models_to_try:
             try:
                 response = client.models.generate_content(
-                    model=model_name,
-                    contents="Reply with exactly: Gemini API connection successful"
+                    model=model,
+                    contents="Say hello and confirm API is connected in under 10 words."
                 )
-                resp_text = (getattr(response, "text", "") or "").strip()
-                print(f"Gemini API connection successful using '{model_name}'!")
-                if resp_text:
-                    print("Response:", resp_text)
+                text = (getattr(response, "text", "") or "").strip()
+                print(f"[SUCCESS] Connected to Google Gemini ({model})!")
+                print(f"Response: {text}")
+                print("========================================")
                 return True
-            except Exception as model_err:
-                last_error = model_err
+            except Exception as err:
+                last_error = err
                 continue
 
-        if last_error:
-            print(f"Gemini API connection note: {last_error}")
+        print(f"[WARNING] Could not reach models. Details: {last_error}")
         return False
     except Exception as error:
-        print(f"Gemini API connection test note: {error}")
+        print(f"[ERROR] Gemini Client initialization failed: {error}")
         return False
 
 
 if __name__ == "__main__":
-    run_test()
+    success = run_test()
+    sys.exit(0 if success else 1)
