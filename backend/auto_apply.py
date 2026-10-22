@@ -19,17 +19,17 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 try:
-    from bs4 import BeautifulSoup
+    from bs4 import BeautifulSoup  # type: ignore
 except ImportError:
     BeautifulSoup = None
 
 try:
-    import requests
+    import requests  # type: ignore
 except ImportError:
     requests = None
 
 try:
-    from analyzer import analyze_resume
+    from analyzer import analyze_resume  # type: ignore
 except ImportError:
     try:
         from backend.analyzer import analyze_resume  # type: ignore
@@ -38,7 +38,7 @@ except ImportError:
             return {"matched_score": 0.0, "matched_skills": [], "missing_skills": []}
 
 try:
-    import apply_db
+    import apply_db  # type: ignore
 except ImportError:
     try:
         from backend import apply_db  # type: ignore
@@ -46,31 +46,7 @@ except ImportError:
         apply_db = None  # type: ignore
 
 try:
-    import ai_analyzer
-except ImportError:
-    try:
-        from backend import ai_analyzer  # type: ignore
-    except ImportError:
-        ai_analyzer = None
-
-try:
-    import daily_db
-except ImportError:
-    try:
-        from backend import daily_db  # type: ignore
-    except ImportError:
-        daily_db = None
-
-try:
-    import job_fetcher
-except ImportError:
-    try:
-        from backend import job_fetcher  # type: ignore
-    except ImportError:
-        job_fetcher = None
-
-try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv  # type: ignore
     load_dotenv()
 except ImportError:
     pass
@@ -134,20 +110,20 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> Dict[str, Any]:
 
     # 1. Check if the URL matches curated fallback jobs (Northwind Labs, Brightpath Systems)
     try:
-        if job_fetcher is not None:
-            for fj in getattr(job_fetcher, "FALLBACK_JOBS", []):
-                if fj.get("url") == url or ("northwind" in url.lower() and "northwind" in fj.get("company", "").lower()) or ("brightpath" in url.lower() and "brightpath" in fj.get("company", "").lower()):
-                    return {
-                        "job_title": fj["title"],
-                        "company": fj["company"],
-                        "job_description": fj["description"],
-                        "apply_email": f"careers@{fj['company'].lower().replace(' ', '')}.com",
-                        "location": fj.get("location", "Online / Remote"),
-                        "job_type": fj.get("job_type", "Full-time"),
-                        "required_skills": ["Python", "FastAPI", "MySQL", "Docker", "REST APIs"],
-                        "job_url": url,
-                        "source": "curated_fallback"
-                    }
+        import job_fetcher  # type: ignore
+        for fj in getattr(job_fetcher, "FALLBACK_JOBS", []):
+            if fj.get("url") == url or ("northwind" in url.lower() and "northwind" in fj.get("company", "").lower()) or ("brightpath" in url.lower() and "brightpath" in fj.get("company", "").lower()):
+                return {
+                    "job_title": fj["title"],
+                    "company": fj["company"],
+                    "job_description": fj["description"],
+                    "apply_email": f"careers@{fj['company'].lower().replace(' ', '')}.com",
+                    "location": fj.get("location", "Online / Remote"),
+                    "job_type": fj.get("job_type", "Full-time"),
+                    "required_skills": ["Python", "FastAPI", "MySQL", "Docker", "REST APIs"],
+                    "job_url": url,
+                    "source": "curated_fallback"
+                }
     except Exception:
         pass
 
@@ -203,16 +179,16 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> Dict[str, Any]:
     if soup is not None:
         meta_title = soup.find("meta", property="og:title") or soup.find("meta", attrs={"name": "title"})
         if meta_title and meta_title.get("content"):
-            og_title = meta_title.get("content").strip()
+            og_title = str(meta_title.get("content")).strip()
 
         meta_company = soup.find("meta", property="og:site_name") or soup.find("meta", attrs={"name": "author"})
         if meta_company and meta_company.get("content"):
-            og_company = meta_company.get("content").strip()
+            og_company = str(meta_company.get("content")).strip()
 
     job_details = None
     try:
-        if ai_analyzer is not None:
-            job_details = ai_analyzer.extract_job_details_with_ai(clean_text, url=url)
+        import ai_analyzer  # type: ignore
+        job_details = ai_analyzer.extract_job_details_with_ai(clean_text, url=url)
     except Exception:
         job_details = None
 
@@ -249,20 +225,19 @@ def scrape_job_from_url(url: str, timeout: int = 15) -> Dict[str, Any]:
 def score_job(resume_text: str, job_description: str) -> Dict[str, Any]:
     """Score the job against the resume using Google GenAI, with fallback to keyword analyzer."""
     try:
-        if ai_analyzer is not None:
-            ai_raw = ai_analyzer.analyze_resume_with_ai(resume_text, job_description)
-            data = json.loads(ai_raw)
-            score = float(data.get("matched_score", data.get("match_score", 0.0)))
-            return {
-                "matched_score": score,
-                "matched_skills": data.get("matched_skills", []),
-                "missing_skills": data.get("missing_skills", []),
-                "suggestions": data.get("suggestions", []),
-                "summary": data.get("summary", ""),
-            }
+        import ai_analyzer  # type: ignore
+        ai_raw = ai_analyzer.analyze_resume_with_ai(resume_text, job_description)
+        data = json.loads(ai_raw)
+        score = float(data.get("matched_score", data.get("match_score", 0.0)))
+        return {
+            "matched_score": score,
+            "matched_skills": data.get("matched_skills", []),
+            "missing_skills": data.get("missing_skills", []),
+            "suggestions": data.get("suggestions", []),
+            "summary": data.get("summary", ""),
+        }
     except Exception:
-        pass
-    return analyze_resume(resume_text, job_description)
+        return analyze_resume(resume_text, job_description)
 
 
 def build_cover_letter(applicant_name: str,
@@ -272,8 +247,9 @@ def build_cover_letter(applicant_name: str,
                        resume_text: Optional[str] = None,
                        job_description: Optional[str] = None) -> str:
     """Generate a tailored cover letter using Google GenAI if available, or fall back to template."""
-    if resume_text and job_description and ai_analyzer is not None:
+    if resume_text and job_description:
         try:
+            import ai_analyzer  # type: ignore
             ai_letter = ai_analyzer.generate_cover_letter_with_ai(
                 applicant_name=applicant_name,
                 resume_text=resume_text,
@@ -321,8 +297,9 @@ def queue_application(resume_text: Optional[str] = None,
     job_url = (job_url or "").strip() or None
 
     # Fallback to saved resume in daily_settings if not provided
-    if not resume_text and daily_db is not None:
+    if not resume_text:
         try:
+            import daily_db  # type: ignore
             resume_text = (daily_db.get_settings().get("resume_text") or "").strip()
         except Exception:
             pass
@@ -406,9 +383,10 @@ def auto_scrape_and_apply_batch(keyword: str,
     Search online jobs for a keyword, automatically scrape/parse job details,
     score each against the candidate's resume using Google GenAI, and auto-queue applications.
     """
-    if job_fetcher is not None:
+    try:
+        import job_fetcher  # type: ignore
         jobs = job_fetcher.fetch_jobs(keyword, limit=limit, region=region)
-    else:
+    except Exception:
         jobs = []
 
     queued = []
@@ -416,8 +394,9 @@ def auto_scrape_and_apply_batch(keyword: str,
     low_matches = []
     errors = []
 
-    if not resume_text and daily_db is not None:
+    if not resume_text:
         try:
+            import daily_db  # type: ignore
             resume_text = daily_db.get_settings().get("resume_text", "")
         except Exception:
             pass
